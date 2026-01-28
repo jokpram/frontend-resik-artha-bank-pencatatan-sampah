@@ -4,69 +4,87 @@ Metode ini lebih efisien karena Nginx langsung melayani file statis (`.html`, `.
 
 ## 1. Persiapan Build di VPS
 
-Upload kodingan dan build project untuk menghasilkan folder `dist`.
+# Panduan Deployment FULL (Frontend + Backend)
 
-```bash
-# Update Server
-sudo apt update
+Panduan ini akan menggabungkan **Frontend (Static)** dan **Backend (Express Port 7000)** dalam satu domain Nginx.
 
-# Install Node.js (Hanya untuk proses build)
-curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-sudo apt install -y nodejs
+## 1. Persiapan Folder
 
-## 1. Persiapan Build di VPS
+Pastikan Frontend dan Backend ada di VPS.
+Asumsi path:
+- **Frontend**: `/var/resikartha/pwa/frontend-resik-artha-bank-pencatatan-sampah`
+- **Backend**: (Sesuaikan dengan lokasi backend, misal `/var/resikartha/pwa/backend` atau satu folder dengan frontend jika di-monorepo).
 
-Masuk ke folder project Anda di VPS:
-
+**Build Frontend:**
 ```bash
 cd /var/resikartha/pwa/frontend-resik-artha-bank-pencatatan-sampah
-
-# Update code terbaru dari git (jika ada perubahan)
 git pull origin main
-
-# Install & Build
 npm install
 npm run build
 ```
+*(Hasil build ada di folder `dist`)*
 
-Setelah perintah ini, akan muncul folder `dist` di dalam folder project tersebut (`/var/resikartha/pwa/frontend-resik-artha-bank-pencatatan-sampah/dist`).
+**Pastikan Backend Jalan:**
+Pastikan backend Anda berjalan di port **7000** (misal menggunakan PM2).
+```bash
+pm2 start server.js --name "backend-resik"
+```
 
-## 2. Konfigurasi Nginx
+## 2. Update Konfigurasi Nginx (GABUNGAN)
 
-Tidak perlu memindahkan folder build. Kita bisa langsung arahkan Nginx ke folder `dist` di lokasi tersebut.
+Karena file `/etc/nginx/sites-available/resik-artha` sudah ada, kita akan **EDIT** file tersebut agar melayani KEDUANYA.
 
 ```bash
-# Install Nginx (jika belum)
-sudo apt install -y nginx
-
-# Buat file config baru
 sudo nano /etc/nginx/sites-available/resik-artha
 ```
 
-Paste konfigurasi berikut:
+**HAPUS SEMUA ISINYA**, lalu **PASTE** konfigurasi berikut:
 
 ```nginx
 server {
     listen 80;
     server_name resikarthamargodadi.axeoma.my.id;
 
-    # Root diarahkan langsung ke folder dist project
+    # =========================================
+    # 1. FRONTEND CONFIG
+    # =========================================
+    # Path folder dist (Frontend Build)
     root /var/resikartha/pwa/frontend-resik-artha-bank-pencatatan-sampah/dist;
-    
     index index.html;
 
-    # HANDLING REACT ROUTER
+    # React Router Handler
     location / {
         try_files $uri $uri/ /index.html;
     }
 
-    # Optimasi Cache Asset
+    # Frontend Assets Cache
     location ~* \.(?:ico|css|js|gif|jpe?g|png|svg|woff2?|json)$ {
         expires 1y;
         add_header Cache-Control "public";
         access_log off;
     }
 
+    # =========================================
+    # 2. BACKEND API PROXY
+    # =========================================
+    # Mengarahkan /api ke Backend (Port 7000)
+    location /api/ {
+        proxy_pass http://localhost:7000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_cache_bypass $http_upgrade;
+    }
+
+    # Proxy Uploads (jika backend menyimpan file gambar)
+    location /uploads/ {
+        proxy_pass http://localhost:7000;
+    }
+
+    # =========================================
+    # 3. GLOBAL
+    # =========================================
     gzip on;
     gzip_vary on;
     gzip_proxied any;
@@ -75,38 +93,24 @@ server {
 }
 ```
 
-## 3. Atur Permission (Opsional tapi Penting)
+## 3. Restart dan Cek
 
-Pastikan user Nginx (`www-data`) bisa membaca folder tersebut. JIKA website menampilkan `403 Forbidden` error, jalankan ini:
+1.  Cek apakah config valid:
+    ```bash
+    sudo nginx -t
+    ```
+2.  Restart Nginx:
+    ```bash
+    sudo systemctl restart nginx
+    ```
 
+Sekarang domain `resikarthamargodadi.axeoma.my.id` melayani:
+-   **Frontend**: Saat akses halaman utama `/`
+-   **Backend**: Saat akses `/api/...`
+
+## 4. Fix Permission Error (403)
+
+Jika Frontend muncul "403 Forbidden", jalankan:
 ```bash
-# Tambahkan user www-data ke group root (atau owner folder) agar bisa baca
 sudo chmod 755 -R /var/resikartha/pwa/frontend-resik-artha-bank-pencatatan-sampah
 ```
-
-## 4. Aktifkan Website
-
-```bash
-# Buat symbolic link
-sudo ln -s /etc/nginx/sites-available/resik-artha /etc/nginx/sites-enabled/
-
-# Cek apakah config error
-sudo nginx -t
-
-# Restart Nginx
-sudo systemctl restart nginx
-```
-
-## 5. Pasang SSL (HTTPS)
-
-Agar website aman dan PWA bisa diinstall (Wajib HTTPS untuk PWA).
-
-```bash
-# Install Certbot
-sudo apt install -y certbot python3-certbot-nginx
-
-# Request Certificate
-sudo certbot --nginx -d resikarthamargodadi.axeoma.my.id
-```
-
-Sekarang akses **https://resikarthamargodadi.axeoma.my.id**, website sudah live tanpa beban Node.js di server!
