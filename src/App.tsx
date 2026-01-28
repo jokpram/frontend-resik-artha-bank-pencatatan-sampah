@@ -39,13 +39,37 @@ function Dashboard() {
     return <DashboardUser />;
 }
 
-import { Toaster } from 'react-hot-toast';
+import { Toaster, toast } from 'react-hot-toast';
+import InstallPWA from './components/InstallPWA';
+
+import { useEffect } from 'react';
+import { initDB } from './utils/db';
 
 export default function App() {
+    useEffect(() => {
+        // Initialize IndexedDB
+        initDB().then(() => {
+            console.log('IndexedDB initialized');
+        });
+
+        // Offline/Online handlers
+        const handleOnline = () => toast.success('Kembali online!');
+        const handleOffline = () => toast.error('Anda sedang offline. Aplikasi berjalan dalam mode offline.');
+
+        window.addEventListener('online', handleOnline);
+        window.addEventListener('offline', handleOffline);
+
+        return () => {
+            window.removeEventListener('online', handleOnline);
+            window.removeEventListener('offline', handleOffline);
+        };
+    }, []);
+
     return (
         <BrowserRouter>
             <AuthProvider>
                 <Toaster position="top-right" />
+                <InstallPWA />
                 <Routes>
                     <Route element={<Layout />}>
                         <Route path="/" element={<LandingPage />} />
